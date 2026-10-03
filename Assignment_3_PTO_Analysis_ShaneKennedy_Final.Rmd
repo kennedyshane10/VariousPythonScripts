@@ -1,0 +1,848 @@
+---
+title: "CT5148 Programming and Tools for AI Assignment 3: PTO Analysis"
+author: 'Name: Shane Kennedy, Student Number: 24252940'
+date: 'last updated: `r Sys.Date()`'
+output:
+  html_document:
+    theme: journal
+    toc: yes
+    toc_float: yes
+    toc_depth: 2
+    number_sections: yes
+    df_print: paged
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+  word_document:
+    toc: yes
+    reference_docx: word_styles_reference.docx
+    toc_depth: 1
+---
+
+***
+  
+# Assignment Details <a name="section1"></a>
+  
+***
+
+## Details provided by Lecturer
+
+**Goal**: In this exercise, we'll analyse some experimental data. 
+This is real data from an experiment I ran recently. 
+I analysed the data and submitted a paper to a conference based on this on Friday!
+The paper was about an optimisation method, PTO, which can solve many types of 
+optimisation problems.
+
+**Due date**: As announced on Canvas.
+
+**Weight**: This assignment is worth 10% of the module.
+
+**Groups**: You may work in a group of 1 (solo), 2, or 3, but you must not work with any student you previously worked with in any assignment in this module or any other module. 
+
+If working in a group:
+
+* You must notify the lecturer by email 1 week before the due date, cc-ing all students in the group, and state that you have not worked together in any other assignment.
+* Students in a group must work together on all aspects -- you cannot split tasks up so that one student doesn't understand how another student's part of the project works.
+* All students in the group must submit and the submissions must be identical. 
+* All communication should cc all group members.
+
+**Resources**: 
+
+* You may use code you find on the internet, but you must clearly cite the URL and clearly mark which parts of your solution are from that URL.
+* You may use code completion and generative AI methods, such as GitHub Copilot and ChatGPT. When doing so you must clearly document your methodology when using it, eg the system(s) you use, the prompts, how you notice when the AI gets things wrong, how you improve it, etc. You must clearly document which parts of your submission come from generative AI.
+* You may discuss with other students/groups, but you may not show your work to them or view their work.
+
+**Interviews**: Post-submission vivas will be used in some cases to give students an opportunity to demonstrate their learning.
+
+---
+
+The data is in `pto_results.csv`, in Canvas. Each row represents the results of one run. There are 15 columns. The important ones for us are:
+
+* `problem`: Name of the problem, eg `OneMax`.
+* `size_cat`: Problem size: `small`, `medium`, `large`
+* `budget`: A measure of the computational resources allowed for this `problem` x `size_cat` combination. For fair comparison between `solver`s, `name_type`s, and `dist_type`s, the budget is *fixed* for a `problem` x `size_cat` combination.
+* `solver`: Inside PTO there are 4 different solvers, just called `RS`, `HC`, `GA`, `PS`.
+* `name_type`: A hyperparameter that controls PTO behaviour. 
+* `dist_type`: Another hyperparameter that controls PTO behaviour. 
+* `rep`: For each setup (`problem` x `size_cat` x `solver` x `name_type` x `dist_type`), we run 20 repetitions, for statistical significance.
+* `elapsed`: The elapsed time for a run in seconds.
+* `norm_fx`: A normalised measure of performance, ie how successful was the optimisation run. 0 is bad, 1 is good.
+
+In R, use statistical and visual methods to address these tasks:
+
+* Read in the data.
+* Take a quick look using `glimpse` or other summary functions.
+* Find out the *levels* (unique values) in each of the columns `problem`, `size_cat`, `solver`, `name_type`, `dist_type`. Based on the number of them, confirm the number of rows is as expected.
+* Compare the overall performance (`norm_fx`):
+  * By `problem` (use `group_by`)
+  * By `problem` x `size_cat`
+  * By `problem` x `size_cat` x `solver`
+  * By `solver` x `name_type` x `dist_type`
+* Which `solver` was fastest and which was slowest?
+* Which `name_type` and which `dist_type` was fastest?
+* Is performance related to run-time? Use correlation.
+
+***
+ 
+# Summaries <a name="section2"></a>
+
+Read in, analyse data and provide suitable summaries
+
+***
+
+```{r, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+
+library(ggridges)
+library(viridis)
+library(ggpubr)
+library(infer)
+library(table1)
+library(tolerance)
+```
+
+Read in the data.
+
+```{r}
+df <- read.csv("C:/Users/skenne26/OneDrive - UHG/Myfolder/12_MSc/CT5148_ProgrammingAndToolsForAI/Assignment3/pto_results.csv")
+```
+
+Take a quick look using `glimpse` or other summary functions
+
+```{r}
+glimpse(df)
+```
+
+```{r}
+dim(df)
+```
+
+We can easily look at the head and tail of the data 
+
+```{r}
+head(df)
+```
+
+```{r}
+tail(df)
+```
+
+Look at the structure 
+
+```{r}
+str(df)
+```
+
+Find out the *levels* (unique values) in each of the columns `problem`, `size_cat`, `solver`, `name_type`, `dist_type`. Based on the number of them, confirm the number of rows is as expected.
+
+```{r}
+
+# problem, size_cat, solver, name_type, dist_type
+
+problem_levels  <- df %>%
+  select(problem) %>%
+  distinct()
+print(problem_levels)
+
+size_cat_levels  <- df %>%
+  select(size_cat) %>%
+  distinct()
+print(size_cat_levels)
+
+solver_levels  <- df %>%
+  select(solver) %>%
+  distinct()
+print(solver_levels)
+
+name_type_levels  <- df %>%
+  select(name_type) %>%
+  distinct()
+print(name_type_levels)
+
+dist_type_levels  <- df %>%
+  select(dist_type) %>%
+  distinct()
+print(dist_type_levels)
+
+```
+
+* For each setup (problem x size_cat x solver x name_type x dist_type), we run 20 repetitions
+* Calculating the expected number of rows. This matches the number of rows we observe in the data.
+
+```{r}
+
+nrow(problem_levels)*nrow(size_cat_levels)*nrow(solver_levels)*nrow(name_type_levels)*nrow(dist_type_levels)*20
+
+```
+***
+ 
+# Analysis <a name="section3"></a>
+
+Compare overall performance by various categories
+
+***
+
+## Overall Performance by Problem
+
+```{r}
+perf_problem <- df %>%
+  group_by(problem) %>%
+  summarise(
+    Count = n(),
+    Mean = mean(norm_fx, na.rm = TRUE),
+    SD = sd(norm_fx, na.rm = TRUE),
+    Min = min(norm_fx, na.rm = TRUE),
+    Q1 = quantile(norm_fx, 0.25, na.rm = TRUE),
+    Median = median(norm_fx, na.rm = TRUE),
+    Q3 = quantile(norm_fx, 0.75, na.rm = TRUE),
+    Max = max(norm_fx, na.rm = TRUE))
+
+print(perf_problem)
+```
+
+**Microsoft Copilot prompt**: 
+
+"I have a 5 number summary, plus Mean, standard deviation and count, of a continuous variable. How could I best analyze this visually using R?" 
+Followed up with:
+
+"I have a small table with 7 categories and a value associated with each. how could I view this?"
+
+
+**Bar Plot of Mean Values of Performance (norm_fx) by Problem**
+
+* We see that the Mean performance is highest for Sphere, OneMax and GE problems
+
+```{r}
+# Create a bar plot
+ggplot(perf_problem, aes(x=problem, y=Mean, fill=problem)) +
+  geom_bar(stat="identity") +
+  labs(title="Bar Plot of Problem and Mean values of norm_fx", x="Problem", y="norm_fx Mean values") +
+  theme_minimal()
+```
+
+**Bar Plot of Standard Deviation of Performance (norm_fx) by Problem**
+
+* We see that standard deviation / spread / variability of results is highest for StringM. 
+* Of the average top performers (Sphere, OneMax and GE), Sphere has the most stable (less variable) results and GE has the highest variability in performance
+
+```{r}
+# Create a bar plot
+ggplot(perf_problem, aes(x=problem, y=SD, fill=problem)) +
+  geom_bar(stat="identity") +
+  labs(title="Bar Plot of Problem and Standard Deviation of norm_fx", x="Problem", y="norm_fx Standard Deviation") +
+  theme_minimal()
+```
+
+## Overall Performance by Problem and Size Category
+
+```{r}
+perf_problem_sizecat <- df %>%
+  group_by(problem, size_cat) %>%
+  summarise(
+    Count = n(),
+    Mean = mean(norm_fx, na.rm = TRUE),
+    SD = sd(norm_fx, na.rm = TRUE),
+    Min = min(norm_fx, na.rm = TRUE),
+    Q1 = quantile(norm_fx, 0.25, na.rm = TRUE),
+    Median = median(norm_fx, na.rm = TRUE),
+    Q3 = quantile(norm_fx, 0.75, na.rm = TRUE),
+    Max = max(norm_fx, na.rm = TRUE)) %>%
+  mutate(Indicator = paste(problem, size_cat, sep = "_"))
+
+print(perf_problem_sizecat)
+```
+
+**Microsoft Copilot**: 
+"I have column "problem", another column "size_cat" and another column "Mean". The first two are categorical and "Mean" is numeric. What are my best options of visualizing them?"
+
+AI then provided me with examples of how I could use Grouped Bar plot, Facet Bar plot, Box Plot, Dot Plot and HeatMap. I selected the most informative charts below
+
+**Grouped Bar Plot of Mean Values of Performance (norm_fx) by Problem and Size Category**
+
+* When looking at the top performing problem categories (Sphere, OneMax, GE), we see that Sphere and OneMax have stable results across size category
+* However, GE outperforms all Problem categories for Medium and Small categories, but has a significantly lower performance in the Large category
+* In Large category: Sphere and OneMax are top performing with very little difference between them
+* In Medium category: GE, Sphere and OneMax are top performing with very little difference between them
+* In Small category: GE outperforms all other categories
+
+```{r}
+ggplot(perf_problem_sizecat, aes(x=size_cat, y=Mean, fill=problem)) +
+  geom_bar(stat="identity", position="dodge") +
+  labs(title="Mean Values by Problem and Size Category", x="Size Category", y="Mean") +
+  theme_minimal()
+```
+
+**Facet Bar Plot of Mean Values of Performance (norm_fx) by Problem and Size Category**
+
+* We see that for most Problem categories, the performance does not vary materially based on size category
+* The exceptions to this are BFS and GE where performance tends to be better for smaller categories
+
+```{r}
+ggplot(perf_problem_sizecat, aes(x=size_cat, y=Mean, fill=size_cat)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~ problem) +
+  labs(title="Mean Values by Size Category for Each Problem", x="Size Category", y="Mean") +
+  theme_minimal()
+```
+
+
+**Facet Bar Plot of Standard Deviation Values of Performance (norm_fx) by Problem and Size Category**
+
+* We see from chart below that the variability (measured by standard deviation) is reasonably stable for most Problem categories across size categories
+* The notable exceptions are GE and StringM where variability tends to reduce as size category reduces
+
+```{r}
+ggplot(perf_problem_sizecat, aes(x=size_cat, y=SD, fill=size_cat)) +
+  geom_bar(stat="identity") +
+  facet_wrap(~ problem) +
+  labs(title="Standard Deviation by Size Category for Each Problem", x="Size Category", y="Standard Deviation") +
+  theme_minimal()
+```
+
+## Overall Performance by Problem, Size Category and Solver
+
+```{r}
+perf_problem_sizecat_solver <- df %>%
+  group_by(problem, size_cat, solver) %>%
+  summarise(
+    Count = n(),
+    Mean = mean(norm_fx, na.rm = TRUE),
+    SD = sd(norm_fx, na.rm = TRUE),
+    Min = min(norm_fx, na.rm = TRUE),
+    Q1 = quantile(norm_fx, 0.25, na.rm = TRUE),
+    Median = median(norm_fx, na.rm = TRUE),
+    Q3 = quantile(norm_fx, 0.75, na.rm = TRUE),
+    Max = max(norm_fx, na.rm = TRUE)) %>%
+  mutate(Indicator = paste(problem, size_cat, solver, sep = "_"))
+
+print(perf_problem_sizecat_solver)
+```
+
+**Microsoft Copilot**:
+
+"now I have column "problem", another column "size_cat", another column "solver" and another colum "Mean". The first three are categorical and "Mean" is numeric. What are my best options of visualizing them?"
+
+
+Grouped bar plot 
+```{r}
+ggplot(perf_problem_sizecat_solver, aes(x=size_cat, y=Mean, fill=solver)) +
+  geom_bar(stat="identity", position="dodge") +
+  facet_wrap(~ problem) +
+  labs(title="Mean Values by Size Category and Solver for Each Problem", 
+       x="Size Category", y="Mean") +
+  theme_minimal()
+```
+
+From the above tables and charts we see that:
+* Sphere: RS solver is lowest performer, particularly for Large size categories. The other 3 solvers (GA, HC and PS) have similar performances, with HC slightly better. Performance is slightly better for larger sized categories
+* OneMax: Very similar picture to Sphere above
+* GE: Again RS is the lowest performer, but only for Large size categories. Difference not material for Medium and Small.
+* StringM: HC is highest solver performer and RS is clearly the lowest 
+
+* OVerall we see that performance tends to be lowest for RS solver across most Problems and Size Categories
+* HC is the highest performing solver for OneMax, Sphere, StringM, GE and NN. It also performs relatively well for BFS and TSP.
+
+
+## Overall Performance by Solver, Name Type and Dist Type
+
+```{r}
+perf_solver_nametype_disttype <- df %>%
+  group_by(solver, name_type, dist_type) %>%
+  summarise(
+    Count = n(),
+    Mean = mean(norm_fx, na.rm = TRUE),
+    SD = sd(norm_fx, na.rm = TRUE),
+    Min = min(norm_fx, na.rm = TRUE),
+    Q1 = quantile(norm_fx, 0.25, na.rm = TRUE),
+    Median = median(norm_fx, na.rm = TRUE),
+    Q3 = quantile(norm_fx, 0.75, na.rm = TRUE),
+    Max = max(norm_fx, na.rm = TRUE)) %>%
+  mutate(Indicator = paste(solver, name_type, dist_type, sep = "_"))
+
+print(perf_solver_nametype_disttype)
+```
+
+
+Grouped bar plot 
+```{r}
+ggplot(perf_solver_nametype_disttype, aes(x=name_type, y=Mean, fill=solver)) +
+  geom_bar(stat="identity", position="dodge") +
+  facet_wrap(~ dist_type) +
+  labs(title="Mean Values by Name Type and Dist Type for Each Solver", 
+       x="Name Type", y="Mean") +
+  theme_minimal()
+```
+
+Facet Grid 
+```{r}
+ggplot(perf_solver_nametype_disttype, aes(x=name_type, y=Mean, fill=solver)) +
+  geom_bar(stat="identity", position="dodge") +
+  facet_grid(dist_type ~ solver) +
+  labs(title="Mean Values by Name Type and Dist Type for Each Solver", 
+       x="Name Type", y="Mean") +
+  theme_minimal()
+```
+
+
+From the above tables and charts we see that:
+
+* RS is the lowest performing solver, while HC is the highest, across both dist types  
+* Performance is slightly higher for coarse than fine dist_type
+* There is no obvious difference in performance between name_type 
+ 
+## Fastest & Slowest Solvers
+
+* RS was the fastest solver with an overall mean time of 1.99 seconds (followed by HC with 3.27 seconds). It also had the least variability in run time with a standard deviation of 3.75 seconds
+* PS was the slowest solver with an overall mean time of 9.26 seconds (followed by GA with 8.26 seconds). It also had the most variability in run time with a standard deviation of 17.07 seconds 
+
+```{r}
+solver_analysis <- df %>%
+  group_by(solver) %>%
+  summarise(
+    Count = n(),
+    Mean = mean(elapsed, na.rm = TRUE),
+    SD = sd(elapsed, na.rm = TRUE),
+    Min = min(elapsed, na.rm = TRUE),
+    Q1 = quantile(elapsed, 0.25, na.rm = TRUE),
+    Median = median(elapsed, na.rm = TRUE),
+    Q3 = quantile(elapsed, 0.75, na.rm = TRUE),
+    Max = max(elapsed, na.rm = TRUE))
+
+print(solver_analysis)
+```
+
+* However, are these results statistically significant? 
+
+**Analysis for Fastest**:
+Null Hypothesis (H0): There is no significant difference in the mean time variable between RS and HC
+Alternative Hypothesis (H1): There is a significant difference in the mean time variable between RS and HC
+
+t-test: difference in means
+
+```{r}
+fastest_solver <- df %>%
+  filter(solver %in% c("RS", "HC"))
+
+# t-test
+t_test_result <- t.test(elapsed ~ solver, conf.level = 0.95, data = fastest_solver)
+print(t_test_result)
+
+# Confidence Interval for the difference in means
+mean_diff <- t_test_result$estimate[1] - t_test_result$estimate[2]
+conf_int <- t_test_result$conf.int
+cat("Mean Difference:", mean_diff, "\n")
+cat("95% Confidence Interval:", conf_int, "\n")
+```
+
+The 95% Confidence Interval above does not contain the value zero.
+We also see that the p-value < 0.000001: There is strong evidence of a difference.
+This means that there is a low probability of observing this data if the null hypothesis is actually true.
+
+Conclusion: As the 95% CI for the difference in means is strictly positive, there is evidence that RS is a faster solver than HC of between 0.91 and 1.68 minutes
+
+Checking sensitivity of analysis to normality assumption:
+
+* Wilcox test: difference in medians 
+* The Wilcox test does not require normality assumption
+* It provides a similar result and the same conclusion
+
+```{r}
+wilcox_test_result <- wilcox.test(elapsed ~ solver, conf.int = TRUE,  data = fastest_solver)
+print(wilcox_test_result)
+```
+
+**Analysis for Slowest**:
+Null Hypothesis (H0): There is no significant difference in the mean time between GA and PS
+Alternative Hypothesis (H1): There is a significant difference in the mean time between GA and PS
+
+t-test: difference in means
+
+```{r}
+slowest_solver <- df %>%
+  filter(solver %in% c("GA", "PS"))
+
+# t-test
+t_test_result <- t.test(elapsed ~ solver, conf.level = 0.95, data = slowest_solver)
+print(t_test_result)
+
+# Confidence Interval for the difference in means
+mean_diff <- t_test_result$estimate[1] - t_test_result$estimate[2]
+conf_int <- t_test_result$conf.int
+cat("Mean Difference:", mean_diff, "\n")
+cat("95% Confidence Interval:", conf_int, "\n")
+```
+
+The 95% Confidence Interval above contains the value zero.
+We also see that the p-value > 0.05: There is insufficient evidence of a difference and we cannot reject the Null Hypothesis
+
+The observed data shows that PS is slower than GA. However, as the 95% CI for the difference in means contains 0, there is insufficient evidence that PS is a slower solver than GA using Mean as our metric.
+
+Checking sensitivity of analysis to normality assumption:
+
+* Wilcox test: difference in medians 
+* The Wilcox test does not require normality assumption
+* It provides a similar result and the same conclusion
+
+```{r}
+wilcox_test_result <- wilcox.test(elapsed ~ solver, conf.int = TRUE,  data = slowest_solver)
+print(wilcox_test_result)
+```
+
+Using the Wilcox we get a different result, using a different middle value (median).The p value is <  0.05 and the difference at the 95% level is strictly negative (does not contain 0). This indicates that there is a statistical difference in median values between PS and GA.
+
+In conclusion, the observed data indicates that PS is the slowest solver. When performing the t-test, which assumes normality in distribution, the difference in mean time between PS and GA is deemed not significant at the 95% Confidence Interval level. However, when performing the wilcox test, which does not require the normality assumption, the difference in median is deemed significant. Overall, we can conclude that there is some evidence to suggest that PS is the slowest solver, however it is not conclusive.
+
+## Fastest Name type and Dist type
+
+**Name type**
+
+* "lin" is the fastest name type with an average run time of 4.67 seconds
+
+```{r}
+nametype_analysis <- df %>%
+  group_by(name_type) %>%
+  summarise(
+    Count = n(),
+    Mean = mean(elapsed, na.rm = TRUE),
+    SD = sd(elapsed, na.rm = TRUE),
+    Min = min(elapsed, na.rm = TRUE),
+    Q1 = quantile(elapsed, 0.25, na.rm = TRUE),
+    Median = median(elapsed, na.rm = TRUE),
+    Q3 = quantile(elapsed, 0.75, na.rm = TRUE),
+    Max = max(elapsed, na.rm = TRUE))
+
+print(nametype_analysis)
+```
+
+* However, is this statistically significant?
+
+**Analysis for Fastest**:
+
+Null Hypothesis (H0): There is no significant difference in the mean elapsed time between lin and str
+Alternative Hypothesis (H1): There is a significant difference in the mean elapsed time between lin and str
+
+t-test: difference in means
+
+```{r}
+# t-test
+t_test_result <- t.test(elapsed ~ name_type, conf.level = 0.95, data = df)
+print(t_test_result)
+
+# Confidence Interval for the difference in means
+mean_diff <- t_test_result$estimate[1] - t_test_result$estimate[2]
+conf_int <- t_test_result$conf.int
+cat("Mean Difference:", mean_diff, "\n")
+cat("95% Confidence Interval:", conf_int, "\n")
+```
+
+
+We see that the 95% CI does not contain the value zero and the p value is <0.05. Therefore, we can conclude that there is a significant difference in mean values between lin and str. 
+
+Checking sensitivity of analysis to normality assumption:
+
+* Wilcox test: difference in medians 
+* The Wilcox test does not require normality assumption
+* It provides a similar result and the same conclusion i.e., here is a significant difference in mean values between lin and str with lin being fastest by between 2.64 and 1.44 seconds on average at the 95% Confidence Interval.
+
+```{r}
+wilcox_test_result <- wilcox.test(elapsed ~ name_type, conf.int = TRUE,  data = df)
+print(wilcox_test_result)
+```
+
+Both tests above provide the same conclusion: the difference in elapsed time between lin and str is significant at the 95% Confidence level
+Therefore, we can conclude that "lin" is the fastest name type
+
+
+**Dist type**
+
+* "coarse" is the fastest Dist type with an average run time of 5.61 seconds (just marginally lower than "fine")
+
+```{r}
+disttype_analysis <- df %>%
+  group_by(dist_type) %>%
+  summarise(
+    Count = n(),
+    Mean = mean(elapsed, na.rm = TRUE),
+    SD = sd(elapsed, na.rm = TRUE),
+    Min = min(elapsed, na.rm = TRUE),
+    Q1 = quantile(elapsed, 0.25, na.rm = TRUE),
+    Median = median(elapsed, na.rm = TRUE),
+    Q3 = quantile(elapsed, 0.75, na.rm = TRUE),
+    Max = max(elapsed, na.rm = TRUE))
+
+print(disttype_analysis)
+```
+
+
+* However, is this statistically significant?
+
+**Analysis for Fastest**:
+
+Null Hypothesis (H0): There is no significant difference in the mean elapsed time between lin and str
+Alternative Hypothesis (H1): There is a significant difference in the mean elapsed time between lin and str
+
+t-test: difference in means
+
+```{r}
+# t-test
+t_test_result <- t.test(elapsed ~ dist_type, conf.level = 0.95, data = df)
+print(t_test_result)
+
+# Confidence Interval for the difference in means
+mean_diff <- t_test_result$estimate[1] - t_test_result$estimate[2]
+conf_int <- t_test_result$conf.int
+cat("Mean Difference:", mean_diff, "\n")
+cat("95% Confidence Interval:", conf_int, "\n")
+```
+
+Checking sensitivity of analysis to normality assumption:
+
+* Wilcox test: difference in medians 
+* The Wilcox test does not require normality assumption
+* It provides a similar result and the same conclusion
+
+```{r}
+wilcox_test_result <- wilcox.test(elapsed ~ dist_type, conf.int = TRUE,  data = df)
+print(wilcox_test_result)
+```
+
+Both tests above provide the same conclusion: the difference in elapsed time between coarse and fine is significant at the 95% Confidence level
+Therefore, we can conclude that "coarse" is the fastest Dist type
+
+## Is performance related to Run Time?
+
+**Microsoft Copilot prompt**:
+
+"give me code to calculate the correlation between two numeric variables and visualise it in R"
+
+```{r}
+# Calculate correlation
+correlation <- cor(df$norm_fx, df$elapsed)
+print(paste("Correlation coefficient:", correlation))
+```
+
+```{r}
+# Visualize the correlation
+ggplot(df, aes(x = norm_fx, y = elapsed)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(title = "Scatter Plot of Performance (norm_fx) vs Run Time (elapsed)",
+       x = "Performance",
+       y = "Run Time") +
+  theme_minimal()
+```
+
+
+**Microsoft Copilot prompt**: 
+
+"can I check it split by categorical variables?"
+
+```{r}
+# Calculate correlation by problem 
+correlation_problem <- df %>%
+  group_by(problem ) %>%
+  summarise(correlation = cor(norm_fx, elapsed))
+
+print(correlation_problem)
+```
+
+**Microsoft Copilot prompt**: 
+
+"In my results performance is negatively correlated with run time (both measured in numeric variables). However, when I calculate correlation split by a categorical variable I get very different results. Some are negatively correlated (e.g. -0.24), while some are positively correlated (e.g. +0.29). What does this tell me?"
+
+
+AI provided an interesting response which helped me generate ideas for further analysis. Please see section 4 for further details. 
+
+
+```{r}
+# Visualize the correlation split by problem
+ggplot(df, aes(x = norm_fx, y = elapsed, color = problem)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Scatter Plot of norm_fx vs elapsed by Problem",
+       x = "norm_fx",
+       y = "elapsed") +
+  theme_minimal()
+```
+
+We can see from the above chart that correlation values seem to be in different clusters, based on the Problem. 
+
+
+```{r}
+# Calculate correlation by size_cat 
+correlation_size_cat <- df %>%
+  group_by(size_cat) %>%
+  summarise(correlation = cor(norm_fx, elapsed))
+
+print(correlation_size_cat)
+```
+
+```{r}
+# Calculate correlation by solver 
+correlation_solver <- df %>%
+  group_by(solver) %>%
+  summarise(correlation = cor(norm_fx, elapsed))
+
+print(correlation_solver)
+```
+
+```{r}
+# Calculate correlation by name_type
+correlation_name_type <- df %>%
+  group_by(name_type) %>%
+  summarise(correlation = cor(norm_fx, elapsed))
+
+print(correlation_name_type)
+```
+
+```{r}
+# Calculate correlation by dist_type
+correlation_dist_type <- df %>%
+  group_by(dist_type) %>%
+  summarise(correlation = cor(norm_fx, elapsed))
+
+print(correlation_dist_type)
+```
+
+
+```{r}
+# Calculate correlation by problem and size_cat
+correlation_problem_size_cat <- df %>%
+  group_by(problem, size_cat) %>%
+  summarise(correlation = cor(norm_fx, elapsed))
+
+print(correlation_problem_size_cat)
+```
+
+
+```{r}
+# Calculate correlation of performance and run time split by problem and budget
+correlation_problem_budget <- df %>%
+  group_by(problem, size_cat, budget) %>%
+  summarise(correlation = cor(norm_fx, elapsed)) %>%
+  arrange(desc(budget))
+
+print(correlation_problem_budget)
+```
+
+Grouped bar plot 
+```{r}
+ggplot(correlation_problem_budget, aes(x=size_cat, y=correlation, fill=budget)) +
+  geom_bar(stat="identity", position="dodge") +
+  facet_wrap(~ problem) +
+  labs(title="Correlation by Size Category and Budget for Each Problem", 
+       x="Size Category", y="Correlation") +
+  theme_minimal()
+```
+
+**Microsoft Copilot prompt**:
+
+"I have two numeric variable and many categorical variables. The correlation coefficient between numeric variables is very small . Is it possible that it could be high when the data is split into smaller groups based on the categorical variables?
+
+AI response:
+
+"Yes, it's definitely possible for the correlation between your two numeric variables to be low overall but to increase when you split the data into smaller groups based on your categorical variables. This phenomenon is often referred to as "masking" or "simpson's paradox."
+
+The above response from Copilot helped me further understand the data. A Google search on Simpon's paradox pointed me to the following website which helped me understand the phenomenon further:
+
+https://discovery.cs.illinois.edu/learn/Basics-of-Data-Science-with-Python/Simpsons-Paradox/
+
+
+**Microsoft Copilot prompt**:
+
+"I have two variables, money (in values ranging from 50 to 100,000) and correlation (in values from 0 to 1). I want to view them graphically to see the relationship and if it is linear. How? Give me R code please"
+
+
+Scatter plot
+```{r}
+# Create the scatter plot
+ggplot(correlation_problem_budget, aes(x = budget, y = correlation)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +  # Add a linear regression line
+  labs(title = "Relationship between Budget and Correlation",
+       x = "Budget",
+       y = "Correlation") +
+  theme_minimal()
+```
+
+
+From the above analysis we see that:
+
+* Overall, performance is negatively correlated with run time, indicating that a higher run time results in poorer performance. However, this correlation is only -0.11 which is quite weak.
+* When analyzed further, we learn that "masking" or "simpson's paradox" is present here. This occurs when relationships between variables are masked at an aggregate level, but uncovered when we segment our data appropriately.
+* When we calculate correlation by "Problem" category we see that for some problems performance is negatively correlated with run time, while for others it is positively correlated. The correlation is still weak, however.  
+* When we break this out further, analyzing correlation of performance and run time split out by "Problem", "Size Category" and "Budget" we see that the correlations vary significantly.
+* We see that for BFS problem there is strong positive correlation between performance and run time. This is particularly true for the Large Size Category and Large budget
+* TSP problem also shows strong positive correlation between performance and run time for Large and Medium Size Category and Large budget.
+* Across most problems, the correlation between performance and run time is moderate to strong for Large Size Categories.
+* This tells us, that for larger size categories, a higher performance is correlated with longer run times.
+* For small size categories, the correlation is weak.
+
+***
+  
+# Resources <a name="section4"></a>
+  
+***
+
+## Lecture Notes
+* Lecture notes from Weeks 11 and 12 of CT5148 Programming And Tools For AI were referred to
+* Lecture notes from ST5001 Statistics For AI were also used
+
+## Use of AI
+Microsoft Copilot was used throughout this assignment. 
+
+**Code Generation**:
+
+* Microsoft Copilot acted as a coding assistant for me, helping provide me with template code that I could then adjust and apply as appropriate to the problem.
+
+* The notes throughout the assignment show the prompts I entered to generate code templates. This code was then used to help produce the visuals/charts above. AI provided me with templates for box plot, histogram, density plot, violin plot, pic chart and dot plots. I then selected the charts which I believed were most informative, and adjusted as needed for this problem.
+
+* AI was very helpful in providing me with starter code. It was much faster to use AI than to search books (such as Hadley Wickham's GGplot2: Elegant Graphics for Data Analysis) or to search code on websites. However, it was only helpful in getting me started. I needed to then make adjustments to the code and decide which graphics were best suited to the problem at hand. 
+
+
+**Ideas for Analysis**:
+
+* In section 3.7 I entered the following prompt to Microsoft Copilot: “In my results performance is negatively correlated with run time (both measured in numeric variables). However, when I calculate correlation split by a categorical variable I get very different results. Some are negatively correlated (e.g. -0.24), while some are positively correlated (e.g. +0.29). What does this tell me?”
+
+* AI provided an interesting response (see below) which helped me generate ideas around what further analysis I could perform to understand the data further. 
+
+AI Response:
+
+It sounds like you're observing some interesting dynamics in your data! When you find that the overall correlation between performance and run time is negative, but the correlations split by a categorical variable show both negative and positive values, it suggests a few things:
+
+1. Heterogeneity in Relationships:
+The relationship between performance and run time may vary significantly across different categories. This means that while the overall trend is negative, certain groups may behave differently. For example, one category might have a strong negative correlation, indicating that as run time increases, performance decreases, while another category might show a positive correlation, suggesting that higher run times are associated with better performance.
+
+2. Potential Confounding Factors:
+The categorical variable might be acting as a confounder or moderator. This means that the effect of run time on performance could be influenced by the category itself. For instance, if one category represents a more efficient process, it might show a positive correlation, while another category might represent a less efficient process, leading to a negative correlation.
+
+3. Different Underlying Mechanisms:
+Each category could have different underlying mechanisms affecting the relationship between performance and run time. For example, in one category, longer run times might be due to more complex tasks that actually enhance performance, while in another category, longer run times might indicate inefficiencies that hurt performance.
+
+4. Sample Size and Variability:
+The sample size within each category can also affect correlation results. Smaller sample sizes may lead to more variability and less reliable correlation estimates.
+
+
+Next Steps:
+
+Visualize the Data: Consider creating scatter plots for each category to visually inspect the relationships. This can help you understand the patterns better.
+Explore Further: You might want to look into other statistical methods, such as regression analysis, to see how the categorical variable interacts with the numeric variables.
+Understanding these nuances can provide deeper insights into your data and help you make more informed decisions. If you have specific categories or data points you'd like to discuss further, feel free to share!
+
+
+**Understanding Unusual Dynamics**:
+
+When analyzing the correlation coefficient between performance and run time, I suspected that the correlation coefficients would change when separated out into groups. AI was helpful in pointing me in the direction of Simpson's paradox to help understand this phenomenon further
+
+
+## Books
+I referred to Hadley Wickham's book "ggplot2: Elegant Graphics for Data Analysis". However, I found it much easier to use Microsoft Copilot and lecture notes to obtain starter code that I could build on to solve the problems
+
+
+## Other Online Resources
+I used Google search to help me understand Simpson's paradox further and assess how it may be relevant for this data set. 
+
+
+
